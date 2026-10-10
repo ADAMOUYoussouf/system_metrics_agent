@@ -32,12 +32,19 @@ system_metrics_agent/
 │   ├── collector.py
 │   ├── config.py
 │   ├── formatter.py
-│   └── sender.py
-├── tests/
-│   ├── test_api.py
-│   ├── test_collector.py
-│   ├── test_formatter.py
-│   └── test_sender.py
+│   ├── sender.py
+│   └── tests/
+│       ├── test_agent.py
+│       ├── test_api.py
+│       ├── test_collector.py
+│       ├── test_config.py
+│       ├── test_formatter.py
+│       └── test_sender.py
+├── Dockerfile.api
+├── Dockerfile.agent
+├── docker-compose.yml
+├── sonar-project.properties
+├── .github/workflows/ci-cd.yml
 ├── .env.example
 ├── requirements.txt
 └── README.md
@@ -237,3 +244,58 @@ Le projet gère notamment :
 │ /metrics         │
 └──────────────────┘
 ```
+
+## Conteneurisation et CI/CD (rapport du TP)
+
+### Lancer avec Docker
+
+```bash
+cp .env.example .env
+docker compose up --build
+curl http://localhost:8000/metrics/latest
+```
+
+### Choix techniques
+
+- **Image de base** : `python:3.12.11-slim-bookworm` (tag précis, jamais `latest`).
+  Alpine a été écartée : `psutil` et `uvicorn[standard]` n'y ont pas toujours
+  de wheels précompilées (musl), ce qui impose un compilateur et alourdit le
+  build pour un gain de taille limité.
+- **Multi-stage** : une étape `builder` crée un venv `/opt/venv` ; l'image
+  finale ne copie que ce venv, sans pip cache ni outils de build.
+- **Une image par rôle** : `requirements-api.txt` (FastAPI, uvicorn) et
+  `requirements-agent.txt` (psutil, requests, python-dotenv). Seuls les
+  fichiers source utiles sont copiés ; les tests ne sont pas dans les images.
+- **Sécurité** : utilisateur non-root (UID 10001), aucun secret ni `.env` dans
+  l'image (`.dockerignore`), configuration injectée à l'exécution.
+- **Prod** : `uvicorn` sans `--reload`, `--host 0.0.0.0`, `EXPOSE 8000`,
+  `HEALTHCHECK` Python (pas besoin de `curl` dans l'image).
+- **`uptime`** : absente de l'image `slim` à ma connaissance ; fournie par le
+  paquet Debian `procps`, ajouté uniquement dans l'image de l'agent.
+- **Compose** : l'agent joint l'API par `http://api:8000/metrics` (127.0.0.1
+  désignerait son propre conteneur) et attend `service_healthy`.
+
+### Ce que change la conteneurisation pour l'agent
+
+Dans un conteneur, `psutil` lit `/proc`, qui reflète en grande partie l'hôte
+pour la RAM et les CPU, mais sans tenir compte des limites cgroups (`--memory`,
+`--cpus`) : les valeurs ne décrivent donc pas fidèlement le conteneur. Le
+`hostname` remonté est celui du conteneur, pas de la machine. Pour surveiller
+réellement un hôte, il faut déployer l'agent sur l'hôte (service systemd,
+DaemonSet Kubernetes avec montages adaptés) ou lire les statistiques cgroups.
+
+### Tailles d'images
+
+À compléter après `docker images` : API = ____ Mo, agent = ____ Mo.
+
+### Pipeline
+
+`.github/workflows/ci-cd.yml` : job `test` (pytest + couverture, SonarQube,
+Quality Gate bloquante) puis job `build-scan-push` (matrice api/agent : build
+local, scan Trivy HIGH/CRITICAL corrigeables, push Docker Hub uniquement sur
+`main`, tags SHA et `latest`). Secrets requis : `DOCKERHUB_USERNAME`,
+`DOCKERHUB_TOKEN`, `SONAR_TOKEN`, `SONAR_HOST_URL`.
+
+### Difficultés rencontrées
+
+À compléter avec ton expérience (échec volontaire du pipeline, captures).
