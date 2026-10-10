@@ -1,0 +1,31 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: system-metrics-api:local
+    container_name: metrics-api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # Le HEALTHCHECK est défini dans Dockerfile.api ; Compose s'en sert
+    # pour la condition service_healthy ci-dessous.
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    image: system-metrics-agent:local
+    container_name: metrics-agent
+    # .env n'est pas versionné : copier .env.example en .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Dans Compose, l'API se joint par son nom de service, pas par 127.0.0.1.
+      # Cette valeur l'emporte sur celle éventuellement présente dans .env.
+      METRICS_ENDPOINT: http://api:8000/metrics
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
