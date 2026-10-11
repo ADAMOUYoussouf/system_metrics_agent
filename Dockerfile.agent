@@ -23,6 +23,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
+# Applique les correctifs de sécurité Debian publiés depuis la sortie de l'image
+# de base (Trivy signalait des CVE HIGH/CRITICAL corrigeables : openssl, gnutls,
+# krb5, pcre2, perl...).
+# hadolint ignore=DL3005
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 # Le collecteur exécute la commande `uptime` via subprocess.
 # Sous Debian, elle est fournie par le paquet procps.
 # Version non épinglée volontairement : les versions exactes disparaissent des

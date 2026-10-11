@@ -25,6 +25,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
+# Applique les correctifs de sécurité Debian publiés depuis la sortie de l'image
+# de base (Trivy signalait des CVE HIGH/CRITICAL corrigeables : openssl, gnutls,
+# krb5, pcre2, perl...).
+# hadolint ignore=DL3005
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
 # Utilisateur non-root, sans shell ni répertoire personnel
 RUN groupadd --system --gid 10001 app \
  && useradd --system --uid 10001 --gid app --no-create-home \
