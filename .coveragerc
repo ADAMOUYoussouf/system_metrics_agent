@@ -1,0 +1,10 @@
+[run]
+source = app
+# Chemins relatifs à la racine du dépôt (app/api.py) : indispensable pour
+# que SonarQube associe correctement coverage.xml aux fichiers sources.
+relative_files = True
+omit =
+    app/tests/*
+
+[report]
+show_missing = True

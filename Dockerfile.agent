@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.12.11
+
+# ---------- Étape 1 : builder (installation des dépendances) ----------
+FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+
+COPY requirements-agent.txt .
+RUN pip install -r requirements-agent.txt
+
+# ---------- Étape 2 : image finale ----------
+FROM python:${PYTHON_VERSION}-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+# Applique les correctifs de sécurité Debian publiés depuis la sortie de l'image
+# de base (Trivy signalait des CVE HIGH/CRITICAL corrigeables : openssl, gnutls,
+# krb5, pcre2, perl...).
+# hadolint ignore=DL3005
+RUN apt-get update \
+ && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
+
+# Le collecteur exécute la commande `uptime` via subprocess.
+# Sous Debian, elle est fournie par le paquet procps.
+# Version non épinglée volontairement : les versions exactes disparaissent des
+# dépôts Debian à chaque mise à jour de sécurité, ce qui casserait le build.
+# hadolint ignore=DL3008
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends procps \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 10001 app \
+ && useradd --system --uid 10001 --gid app --no-create-home \
+            --shell /usr/sbin/nologin app
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --chown=app:app app/__init__.py app/agent.py app/collector.py \
+     app/config.py app/formatter.py app/sender.py ./app/
+
+USER 10001:10001
+
+# Configuration injectée à l'exécution (aucun .env dans l'image) :
+# METRICS_ENDPOINT, COLLECTION_INTERVAL, REQUEST_TIMEOUT
+CMD ["python", "-m", "app.agent"]
