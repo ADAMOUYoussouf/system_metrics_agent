@@ -247,55 +247,66 @@ Le projet gère notamment :
 
 ## Conteneurisation et CI/CD (rapport du TP)
 
-### Lancer avec Docker
+Lancer avec Docker : `cp .env.example .env`, puis `docker compose up --build`
+et `curl http://localhost:8000/metrics/latest`.
 
-```bash
-cp .env.example .env
-docker compose up --build
-curl http://localhost:8000/metrics/latest
-```
+Images publiées : [`youssoufbest/system-metrics-api`](https://hub.docker.com/r/youssoufbest/system-metrics-api)
+et [`youssoufbest/system-metrics-agent`](https://hub.docker.com/r/youssoufbest/system-metrics-agent)
+(tags `latest` et SHA du commit).
 
 ### Choix techniques
 
-- **Image de base** : `python:3.12.11-slim-bookworm` (tag précis, jamais `latest`).
-  Alpine a été écartée : `psutil` et `uvicorn[standard]` n'y ont pas toujours
-  de wheels précompilées (musl), ce qui impose un compilateur et alourdit le
-  build pour un gain de taille limité.
-- **Multi-stage** : une étape `builder` crée un venv `/opt/venv` ; l'image
-  finale ne copie que ce venv, sans pip cache ni outils de build.
-- **Une image par rôle** : `requirements-api.txt` (FastAPI, uvicorn) et
-  `requirements-agent.txt` (psutil, requests, python-dotenv). Seuls les
-  fichiers source utiles sont copiés ; les tests ne sont pas dans les images.
+- **Base** : `python:3.12.11-slim-bookworm`, tag précis (jamais `latest`). Alpine
+  écartée : `psutil` et `uvicorn[standard]` y manquent souvent de wheels (musl),
+  ce qui impose un compilateur pour un faible gain de taille.
+- **Multi-stage** : un venv `/opt/venv` est construit dans `builder`, seul ce venv
+  est copié dans l'image finale (pas de cache pip ni d'outils de build).
+- **Une image par rôle** : `requirements-api.txt` et `requirements-agent.txt`,
+  seuls les fichiers source utiles sont copiés (pas de tests dans les images).
 - **Sécurité** : utilisateur non-root (UID 10001), aucun secret ni `.env` dans
-  l'image (`.dockerignore`), configuration injectée à l'exécution.
-- **Prod** : `uvicorn` sans `--reload`, `--host 0.0.0.0`, `EXPOSE 8000`,
-  `HEALTHCHECK` Python (pas besoin de `curl` dans l'image).
-- **`uptime`** : absente de l'image `slim` à ma connaissance ; fournie par le
-  paquet Debian `procps`, ajouté uniquement dans l'image de l'agent.
+  l'image, configuration injectée à l'exécution, `HEALTHCHECK` Python.
+- **`uptime`** : absente de l'image `slim`, fournie par le paquet Debian `procps`,
+  installé uniquement dans l'image de l'agent.
 - **Compose** : l'agent joint l'API par `http://api:8000/metrics` (127.0.0.1
   désignerait son propre conteneur) et attend `service_healthy`.
-
-### Ce que change la conteneurisation pour l'agent
-
-Dans un conteneur, `psutil` lit `/proc`, qui reflète en grande partie l'hôte
-pour la RAM et les CPU, mais sans tenir compte des limites cgroups (`--memory`,
-`--cpus`) : les valeurs ne décrivent donc pas fidèlement le conteneur. Le
-`hostname` remonté est celui du conteneur, pas de la machine. Pour surveiller
-réellement un hôte, il faut déployer l'agent sur l'hôte (service systemd,
-DaemonSet Kubernetes avec montages adaptés) ou lire les statistiques cgroups.
+- **Limite connue** : dans un conteneur, `psutil` lit `/proc` sans tenir compte
+  des limites cgroups, et le `hostname` est celui du conteneur ; pour surveiller
+  réellement un hôte, l'agent doit tourner sur l'hôte.
 
 ### Tailles d'images
 
-À compléter après `docker images` : API = ____ Mo, agent = ____ Mo.
+| Image | Taille locale (`docker images`) | Taille compressée (Docker Hub) |
+|-------|------|------|
+| `system-metrics-api` | ≈ 260 Mo | 76,14 Mo |
+| `system-metrics-agent` | ≈ 212 Mo | 65,97 Mo |
 
-### Pipeline
+La taille locale est mesurée avant l'ajout de `apt-get upgrade` ; la taille
+compressée est celle que l'on télécharge (`linux/amd64`).
 
-`.github/workflows/ci-cd.yml` : job `test` (pytest + couverture, SonarQube,
-Quality Gate bloquante) puis job `build-scan-push` (matrice api/agent : build
-local, scan Trivy HIGH/CRITICAL corrigeables, push Docker Hub uniquement sur
-`main`, tags SHA et `latest`). Secrets requis : `DOCKERHUB_USERNAME`,
-`DOCKERHUB_TOKEN`, `SONAR_TOKEN`, `SONAR_HOST_URL`.
+### Pipeline (`.github/workflows/ci-cd.yml`)
+
+Job `test` : black, flake8, pytest avec couverture, analyse SonarQube Cloud et
+Quality Gate bloquante. Job `build-scan-push` (matrice api/agent, après `test`) :
+build local, scan Trivy (HIGH/CRITICAL corrigeables, échec bloquant), puis push
+Docker Hub (tags SHA et `latest`) uniquement sur un push vers `main`, jamais sur
+une Pull Request. Secrets : `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`,
+`SONAR_TOKEN`, `SONAR_HOST_URL`.
 
 ### Difficultés rencontrées
 
-À compléter avec ton expérience (échec volontaire du pipeline, captures).
+- **Docker Desktop** : « Virtualization support not detected » malgré le BIOS ;
+  résolu en activant WSL et VirtualMachinePlatform, puis redémarrage.
+- **Tests sous Windows** : deux tests du collecteur échouaient ; `platform.system`
+  est maintenant simulé dans les tests.
+- **Lint** : le code existant ne passait pas `black` ; reformatage et suppression
+  d'un import inutilisé.
+- **SonarQube Cloud** : l'analyse automatique entrait en conflit avec l'analyse
+  CI ; elle a été désactivée.
+- **Secret Docker Hub** : un retour à la ligne parasite dans `DOCKERHUB_USERNAME`
+  rendait le nom d'image invalide pour Trivy ; secret recréé.
+- **Échec volontaire du pipeline** : Trivy a bloqué la build (46 vulnérabilités
+  HIGH/CRITICAL corrigeables dans les paquets Debian de l'image de base).
+  Correction : `apt-get upgrade` dans les deux Dockerfiles, au prix d'un build
+  moins reproductible. Le run suivant est vert.
+- **Pistes** : l'API conserve les métriques en mémoire sans limite
+  (`received_metrics`) ; une supervision Prometheus/Grafana pourrait s'ajouter.
