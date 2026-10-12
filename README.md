@@ -183,6 +183,30 @@ POST /metrics
 GET /metrics/latest
 ```
 
+### Exposer les métriques pour Prometheus
+
+```bash
+curl http://localhost:8000/prometheus
+```
+
+Renvoie la dernière mesure de chaque machine au format texte Prometheus
+(`host_cpu_percent`, `host_memory_percent`, `host_load_1m`, ... avec le label
+`hostname`) et le compteur `metrics_received_total`.
+
+## Supervision (Prometheus + Grafana)
+
+`docker compose up --build` démarre aussi Prometheus et Grafana :
+
+| Service | Adresse | Rôle |
+|---|---|---|
+| API | http://localhost:8000/prometheus | expose les métriques |
+| Prometheus | http://localhost:9090 | collecte l'API toutes les 5 s |
+| Grafana | http://localhost:3000 (admin / admin) | tableau de bord « System Metrics » |
+
+Le tableau de bord et la source de données sont provisionnés automatiquement
+depuis `monitoring/`. Le mot de passe Grafana se change avec la variable
+`GRAFANA_ADMIN_PASSWORD`.
+
 ## Tests
 
 Exécuter toute la suite :

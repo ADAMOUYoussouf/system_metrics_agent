@@ -23,3 +23,6 @@ app/tests
 README.md
 Dockerfile*
 docker-compose*.yml
+
+# Supervision (non utilisée dans les images)
+monitoring
