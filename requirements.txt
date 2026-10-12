@@ -8,3 +8,4 @@ pytest-cov>=5.0.0
 httpx2>=1.0.0
 flake8>=7.4.1
 black>=26.10.0
+prometheus-client>=0.20.0
